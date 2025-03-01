@@ -773,6 +773,13 @@ export interface AnnotationState {
             changeTime: number | null;
             changeFrameEvent: Event | null;
         };
+        audio: {
+            muted: boolean;
+            fetching: boolean;
+            chunks: Record<number, ArrayBuffer>;
+            activeRequests: Map<number, Promise<void>>;
+            currentChunk: number | null;
+        };
         navigationType: NavigationType;
         ranges: string;
         navigationBlocked: boolean;

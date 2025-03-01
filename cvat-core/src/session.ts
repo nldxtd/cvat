@@ -281,6 +281,14 @@ function buildDuplicatedAPI(prototype) {
                     );
                     return result;
                 },
+                async audio(chunkIndex) {
+                    const result = await PluginRegistry.apiWrapper.call(
+                        this,
+                        prototype.frames.audio,
+                        chunkIndex,
+                    );
+                    return result;
+                },
             },
             writable: true,
         }),
@@ -414,6 +422,7 @@ export class Session {
             frameTo: number,
         ) => Promise<number | null>;
         chunk: (chunk: number, quality: ChunkQuality) => Promise<ArrayBuffer>;
+        audio: (chunk: number) => Promise<ArrayBuffer>;
     };
 
     public logger: {
@@ -472,6 +481,7 @@ export class Session {
             search: Object.getPrototypeOf(this).frames.search.bind(this),
             contextImage: Object.getPrototypeOf(this).frames.contextImage.bind(this),
             chunk: Object.getPrototypeOf(this).frames.chunk.bind(this),
+            audio: Object.getPrototypeOf(this).frames.audio.bind(this),
         };
 
         this.logger = {

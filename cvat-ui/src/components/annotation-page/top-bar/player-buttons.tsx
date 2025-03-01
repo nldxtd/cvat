@@ -23,6 +23,8 @@ import {
     NextEmptyIcon,
     ForwardJumpIcon,
     LastIcon,
+    SoundOnIcon,
+    SoundOffIcon
 } from 'icons';
 import { ShortcutScope } from 'utils/enums';
 import { registerComponentShortcuts } from 'actions/shortcuts-actions';
@@ -30,6 +32,7 @@ import { subKeyMap } from 'utils/component-subkeymap';
 
 interface Props {
     playing: boolean;
+    muteAudio: boolean;
     playPauseShortcut: string;
     nextFrameShortcut: string;
     previousFrameShortcut: string;
@@ -39,6 +42,7 @@ interface Props {
     workspace: Workspace;
     navigationType: NavigationType;
     onSwitchPlay(): void;
+    onSwitchMute(): void;
     onPrevFrame(): void;
     onNextFrame(): void;
     onForward(): void;
@@ -99,6 +103,7 @@ registerComponentShortcuts(componentShortcuts);
 function PlayerButtons(props: Props): JSX.Element {
     const {
         playing,
+        muteAudio,
         playPauseShortcut,
         nextFrameShortcut,
         previousFrameShortcut,
@@ -108,6 +113,7 @@ function PlayerButtons(props: Props): JSX.Element {
         navigationType,
         workspace,
         onSwitchPlay,
+        onSwitchMute,
         onPrevFrame,
         onNextFrame,
         onForward,
@@ -265,6 +271,15 @@ function PlayerButtons(props: Props): JSX.Element {
                     />
                 </CVATTooltip>
             )}
+
+            <CVATTooltip title='Toggle audio'>
+                <Icon
+                    style={navIconStyle}
+                    className='cvat-player-mute-button'
+                    component={muteAudio ? SoundOffIcon : SoundOnIcon}  // 根据状态显示不同图标
+                    onClick={onSwitchMute}
+                />
+            </CVATTooltip>
 
             <Popover
                 trigger='contextMenu'

@@ -304,6 +304,15 @@ export function implementJob(Job: typeof JobClass): typeof JobClass {
         },
     });
 
+    Object.defineProperty(Job.prototype.frames.audio, 'implementation', {
+        value: function audioImplementation(
+            this: JobClass,
+            chunkIndex: Parameters<typeof JobClass.prototype.frames.audio>[0],
+        ): ReturnType<typeof JobClass.prototype.frames.audio> {
+            return serverProxy.frames.getAudioData(this.id, chunkIndex);
+        },
+    });
+
     Object.defineProperty(Job.prototype.frames.search, 'implementation', {
         value: function searchFrameImplementation(
             this: JobClass,

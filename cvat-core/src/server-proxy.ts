@@ -1536,6 +1536,39 @@ async function getData(jid: number, chunk: number, quality: ChunkQuality, retry 
     }
 }
 
+async function getAudioData(jid: number, chunk: number, retry = 0): Promise<ArrayBuffer> {
+    const { backendAPI } = config;
+    try {
+        const response = await (workerAxios as any).get(`${backendAPI}/jobs/${jid}/audio`, {
+            params: {
+                ...enableOrganization(),
+                index: chunk,
+            },
+            responseType: 'arraybuffer',
+        });
+
+        const contentLength = +(response.headers || {})['content-length'];
+        if (Number.isInteger(contentLength) && response.data.byteLength < +contentLength) {
+            if (retry < 10) {
+                setTimeout(() => {
+                    throw new Error(
+                        `Truncated audio chunk, try: ${retry}. Job: ${jid}, chunk: ${chunk}. ` +
+                        `Body size: ${response.data.byteLength}`,
+                    );
+                });
+                return await getAudioData(jid, chunk, retry + 1);
+            }
+            throw new Error(
+                `Truncated audio chunk. Job: ${jid}, chunk: ${chunk}. ` +
+                `Body size: ${response.data.byteLength}`,
+            );
+        }
+        return response.data;
+    } catch (errorData) {
+        throw generateError(errorData);
+    }
+}
+
 async function getMeta(session: 'job' | 'task', id: number): Promise<SerializedFramesMetaData> {
     const { backendAPI } = config;
 
@@ -2510,6 +2543,7 @@ export default Object.freeze({
 
     frames: Object.freeze({
         getData,
+        getAudioData,
         getMeta,
         saveMeta,
         getPreview,

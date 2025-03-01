@@ -102,6 +102,13 @@ const defaultState: AnnotationState = {
             changeTime: null,
             changeFrameEvent: null,
         },
+        audio: {
+            muted: false,
+            fetching: false,
+            chunks: {},
+            activeRequests: new Map(),
+            currentChunk: null,
+        },
         navigationType: NavigationType.REGULAR,
         ranges: '',
         playing: false,
@@ -334,6 +341,7 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
             const {
                 number,
                 data,
+                chunkIndex,
                 filename,
                 relatedFiles,
                 states,
@@ -359,6 +367,10 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                         changeTime,
                         delay,
                         changeFrameEvent,
+                    },
+                    audio: {
+                        ...state.player.audio,
+                        currentChunk: chunkIndex,
                     },
                 },
                 annotations: {
@@ -498,6 +510,88 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                 canvas: {
                     ...state.canvas,
                     ready: true,
+                },
+            };
+        }
+        case AnnotationActionTypes.SET_AUDIO_MUTED: {
+            return {
+                ...state,
+                player: {
+                    ...state.player,
+                    audio: {
+                        ...state.player.audio,
+                        muted: action.payload,
+                    },
+                },
+            };
+        }
+        case AnnotationActionTypes.SET_AUDIO_FETCHING: {
+            return {
+                ...state,
+                player: {
+                    ...state.player,
+                    audio: {
+                        ...state.player.audio,
+                        fetching: action.payload,
+                    },
+                },
+            };
+        }
+        case AnnotationActionTypes.ADD_AUDIO_CHUNK: {
+            const { chunkIndex, buffer } = action.payload;
+            return {
+                ...state,
+                player: {
+                    ...state.player,
+                    audio: {
+                        ...state.player.audio,
+                        chunks: {
+                            ...state.player.audio.chunks,
+                            [chunkIndex]: buffer,
+                        },
+                        fetching: false,
+                    },
+                },
+            };
+        }
+        case AnnotationActionTypes.SET_CURRENT_AUDIO_CHUNK: {
+            return {
+                ...state,
+                player: {
+                    ...state.player,
+                    audio: {
+                        ...state.player.audio,
+                        currentChunk: action.payload,
+                    },
+                },
+            };
+        }
+        case AnnotationActionTypes.ADD_AUDIO_ACTIVE_REQUEST: {
+            const { chunkIndex, promise } = action.payload;
+            const newActiveRequests = new Map(state.player.audio.activeRequests);
+            newActiveRequests.set(chunkIndex, promise);
+            return {
+                ...state,
+                player: {
+                    ...state.player,
+                    audio: {
+                        ...state.player.audio,
+                        activeRequests: newActiveRequests,
+                    },
+                },
+            };
+        }
+        case AnnotationActionTypes.REMOVE_AUDIO_ACTIVE_REQUEST: {
+            const newActiveRequests = new Map(state.player.audio.activeRequests);
+            newActiveRequests.delete(action.payload);
+            return {
+                ...state,
+                player: {
+                    ...state.player,
+                    audio: {
+                        ...state.player.audio,
+                        activeRequests: newActiveRequests,
+                    },
                 },
             };
         }

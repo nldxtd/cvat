@@ -29,7 +29,7 @@ import {
     ShapeType,
     Workspace,
 } from 'reducers';
-import { switchToolsBlockerState } from './settings-actions';
+import { SettingsActionTypes, switchToolsBlockerState } from './settings-actions';
 
 interface AnnotationsParameters {
     filters: object[];
@@ -104,6 +104,13 @@ export enum AnnotationActionTypes {
     SAVE_ANNOTATIONS_FAILED = 'SAVE_ANNOTATIONS_FAILED',
     SWITCH_PLAY = 'SWITCH_PLAY',
     CONFIRM_CANVAS_READY = 'CONFIRM_CANVAS_READY',
+
+    SET_AUDIO_MUTED = 'SET_AUDIO_MUTED',
+    SET_AUDIO_FETCHING = 'SET_AUDIO_FETCHING',
+    ADD_AUDIO_CHUNK = 'ADD_AUDIO_CHUNK',
+    SET_CURRENT_AUDIO_CHUNK = 'SET_CURRENT_AUDIO_CHUNK',
+    ADD_AUDIO_ACTIVE_REQUEST = 'ADD_AUDIO_ACTIVE_REQUEST',
+    REMOVE_AUDIO_ACTIVE_REQUEST = 'REMOVE_AUDIO_ACTIVE_REQUEST',
 
     UPDATE_ACTIVE_CONTROL = 'UPDATE_ACTIVE_CONTROL',
 
@@ -642,6 +649,13 @@ export function changeFrameAsync(
         const { jobInstance: job, frame } = receiveAnnotationsParameters();
         const state: CombinedState = getState();
         const {
+            player: {
+                audio: {
+                    chunks: currentAudioChunks,
+                    activeRequests: currentAudioRequests,
+                },
+                playing: isPlaying,
+            },
             propagate: {
                 visible: propagateVisible,
             },
@@ -661,6 +675,84 @@ export function changeFrameAsync(
 
             if (!isAbleToChangeFrame(toFrame) || statisticsVisible || propagateVisible) {
                 return;
+            }
+
+            const chunkIndex = Math.floor(toFrame / job.dataChunkSize);
+            const framePositionInChunk = toFrame % job.dataChunkSize;
+            const isInLatterHalf = framePositionInChunk >= Math.ceil(job.dataChunkSize / 2);
+
+            try {
+                if (!currentAudioChunks[chunkIndex]) {
+                    dispatch({
+                        type: AnnotationActionTypes.SET_AUDIO_FETCHING,
+                        payload: true,
+                    });
+
+                    if (currentAudioRequests.has(chunkIndex)) {
+                        await currentAudioRequests.get(chunkIndex);
+                    } else {
+                        console.log(`Fetching audio chunk ${chunkIndex} for frame ${toFrame}`);
+                        const audioBuffer = await job.frames.audio(chunkIndex);
+                        if (audioBuffer) {
+                            dispatch({
+                                type: AnnotationActionTypes.ADD_AUDIO_CHUNK,
+                                payload: {
+                                    chunkIndex,
+                                    buffer: audioBuffer,
+                                },
+                            });
+                        }
+                    }
+                    dispatch({
+                        type: AnnotationActionTypes.SET_AUDIO_FETCHING,
+                        payload: false,
+                    });
+                }
+
+                if (isPlaying && isInLatterHalf) {
+                    const nextChunkIndex = chunkIndex + 1;
+                    if (nextChunkIndex * job.dataChunkSize <= job.stopFrame &&
+                        !currentAudioChunks[nextChunkIndex] &&
+                        !currentAudioRequests.has(nextChunkIndex)) {
+                        const prefetchPromise = new Promise<void>((resolve) => {
+                            job.frames.audio(nextChunkIndex)
+                                .then((audioBuffer) => {
+                                    if (audioBuffer) {
+                                        dispatch({
+                                            type: AnnotationActionTypes.ADD_AUDIO_CHUNK,
+                                            payload: {
+                                                chunkIndex: nextChunkIndex,
+                                                buffer: audioBuffer,
+                                            },
+                                        });
+                                    }
+                                })
+                                .catch((error) => {
+                                    console.warn('Failed to prefetch audio chunk:', error);
+                                })
+                                .finally(() => {
+                                    dispatch({
+                                        type: AnnotationActionTypes.REMOVE_AUDIO_ACTIVE_REQUEST,
+                                        payload: nextChunkIndex,
+                                    });
+                                    resolve();
+                                });
+                        });
+                        dispatch({
+                            type: AnnotationActionTypes.ADD_AUDIO_ACTIVE_REQUEST,
+                            payload: {
+                                chunkIndex: nextChunkIndex,
+                                promise: prefetchPromise,
+                            },
+                        });
+                    }
+                }
+            } catch (audioError) {
+                dispatch({
+                    type: AnnotationActionTypes.SET_AUDIO_FETCHING,
+                    payload: false,
+                });
+                console.warn('Failed to load audio chunk:', audioError);
             }
 
             const data = await job.frames.get(toFrame, fillBuffer, frameStep);
@@ -705,6 +797,7 @@ export function changeFrameAsync(
                 payload: {
                     number: toFrame,
                     data,
+                    chunkIndex,
                     filename: data.filename,
                     relatedFiles: data.relatedFiles,
                     states,
@@ -728,6 +821,13 @@ export function changeFrameAsync(
                 });
             }
         }
+    };
+}
+
+export function switchMute(mute: boolean): AnyAction {
+    return {
+        type: AnnotationActionTypes.SET_AUDIO_MUTED,
+        payload: mute,
     };
 }
 
@@ -928,6 +1028,55 @@ export function getJobAsync({
                 (await job.frames.search(
                     { notDeleted: !showDeletedFrames }, job.startFrame, job.stopFrame,
                 )) || job.startFrame;
+
+            try {
+                dispatch({
+                    type: AnnotationActionTypes.SET_AUDIO_FETCHING,
+                    payload: true,
+                });
+                const chunkIndex = Math.floor(frameNumber / job.dataChunkSize);
+                console.log(`Fetching audio chunk ${chunkIndex} for frame ${frameNumber}`);
+
+                const audioBuffer = await job.frames.audio(chunkIndex);
+
+                if (audioBuffer) {
+                    const audioContext = new AudioContext();
+                    const sourceArray = new Uint8Array(audioBuffer);
+                    const audioBufferCopy = sourceArray.buffer.slice(0);
+                    audioContext.decodeAudioData(audioBufferCopy,
+                        (buffer) => {
+                            const audioDuration = buffer.duration;
+                            const frameSpeed = Math.ceil(job.dataChunkSize / audioDuration);
+                            dispatch({
+                                type: SettingsActionTypes.CHANGE_FRAME_SPEED,
+                                payload: {
+                                    frameSpeed,
+                                },
+                            });
+                        },
+                        (decodeError) => {
+                            console.error('Error decoding audio data:', decodeError);
+                        },
+                    );
+                    dispatch({
+                        type: AnnotationActionTypes.ADD_AUDIO_CHUNK,
+                        payload: {
+                            chunkIndex,
+                            buffer: audioBuffer,
+                        },
+                    });
+                }
+                dispatch({
+                    type: AnnotationActionTypes.SET_CURRENT_AUDIO_CHUNK,
+                    payload: chunkIndex,
+                });
+            } catch (audioError) {
+                dispatch({
+                    type: AnnotationActionTypes.SET_AUDIO_FETCHING,
+                    payload: false,
+                });
+                console.warn('Failed to load audio chunk:', audioError);
+            }
 
             const frameData = await job.frames.get(frameNumber);
             const jobMeta = await cvat.frames.getMeta('job', job.id);

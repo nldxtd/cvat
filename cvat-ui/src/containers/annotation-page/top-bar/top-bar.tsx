@@ -10,6 +10,7 @@ import { RouteComponentProps } from 'react-router-dom';
 
 import {
     changeFrameAsync,
+    switchMute,
     changeWorkspace as changeWorkspaceAction,
     collectStatisticsAsync,
     redoActionAsync,
@@ -53,6 +54,11 @@ interface StateToProps {
     frameSpeed: FrameSpeed;
     frameDelay: number;
     frameFetching: boolean;
+    muteAudio: boolean;
+    audioFetching: boolean
+    audioChunks: Record<number, ArrayBuffer>;
+    activeRequests: Map<number, Promise<void>>;
+    currentAudioChunk: number | null;
     playing: boolean;
     saving: boolean;
     canvasIsReady: boolean;
@@ -76,6 +82,7 @@ interface StateToProps {
 
 interface DispatchToProps {
     onChangeFrame(frame: number, fillBuffer?: boolean, frameStep?: number): void;
+    onSwitchMute(Mute: boolean): void;
     onSwitchPlay(playing: boolean): void;
     onSaveAnnotation(): void;
     showStatistics(sessionInstance: Job): void;
@@ -112,6 +119,13 @@ function mapStateToProps(state: CombinedState): StateToProps {
                     delay: frameDelay,
                     fetching: frameFetching,
                 },
+                audio: {
+                    muted: muteAudio,
+                    fetching: audioFetching,
+                    chunks: audioChunks,
+                    activeRequests,
+                    currentChunk: currentAudioChunk,
+                },
                 navigationType,
             },
             annotations: {
@@ -140,6 +154,11 @@ function mapStateToProps(state: CombinedState): StateToProps {
         frameSpeed,
         frameDelay,
         frameFetching,
+        muteAudio,
+        audioFetching,
+        audioChunks,
+        activeRequests,
+        currentAudioChunk,
         playing,
         canvasIsReady,
         saving,
@@ -169,6 +188,9 @@ function mapDispatchToProps(dispatch: any): DispatchToProps {
     return {
         onChangeFrame(frame: number, fillBuffer?: boolean, frameStep?: number): void {
             dispatch(changeFrameAsync(frame, fillBuffer, frameStep));
+        },
+        onSwitchMute(Mute: boolean): void {
+            dispatch(switchMute(Mute));
         },
         onSwitchPlay(playing: boolean): void {
             dispatch(switchPlay(playing));
@@ -229,11 +251,16 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
     private autoSaveInterval: number | undefined;
     private isWaitingForPlayDelay: boolean;
     private unblock: any;
+    private audioContext: AudioContext | null = null;
+    private audioSource: AudioBufferSourceNode | null = null;
+    private currentChunkIndex: number | null = null;
+    private timePerFrame: number | null = null;
 
     constructor(props: Props) {
         super(props);
         this.isWaitingForPlayDelay = false;
         this.inputFrameRef = React.createRef<HTMLInputElement>();
+        this.currentChunkIndex = 0;
     }
 
     public componentDidMount(): void {
@@ -281,6 +308,7 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
         window.clearInterval(this.autoSaveInterval);
         window.removeEventListener('beforeunload', this.beforeUnloadCallback);
         this.unblock();
+        this.cleanupAudio();
     }
 
     private async handlePlayIfNecessary(): Promise<void> {
@@ -288,6 +316,8 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
             jobInstance,
             frameNumber,
             frameDelay,
+            muteAudio,
+            audioFetching,
             frameFetching,
             playing,
             canvasIsReady,
@@ -297,12 +327,19 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
 
         const { stopFrame } = jobInstance;
 
-        if (playing && canvasIsReady && !frameFetching && !this.isWaitingForPlayDelay) {
+        if (playing && canvasIsReady && !frameFetching && !audioFetching && !this.isWaitingForPlayDelay) {
             this.isWaitingForPlayDelay = true;
             try {
-                await new Promise((resolve) => {
-                    setTimeout(resolve, frameDelay);
-                });
+                if (!muteAudio) {
+                    this.playAudioForFrame(frameNumber, jobInstance.dataChunkSize);
+                    await new Promise((resolve) => {
+                        setTimeout(resolve, frameDelay);
+                    });
+                } else {
+                    await new Promise((resolve) => {
+                        setTimeout(resolve, frameDelay);
+                    });
+                }
 
                 const { playing: currentPlaying, showDeletedFrames } = this.props;
 
@@ -363,6 +400,11 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
         } else if (frameNumber < jobInstance.stopFrame) {
             onSwitchPlay(true);
         }
+    };
+
+    private onSwitchMute = (): void => {
+        const { muteAudio, onSwitchMute } = this.props;
+        onSwitchMute(!muteAudio);
     };
 
     private onFirstFrame = async (): Promise<void> => {
@@ -606,6 +648,93 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
         return undefined;
     };
 
+    private playAudioForFrame(frameNumber: number, dataChunkSize: number): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            const { audioChunks } = this.props;
+            const chunkIndex = Math.floor(frameNumber / dataChunkSize);
+            const framePositionInChunk = frameNumber % dataChunkSize;
+
+            if (!this.audioContext) {
+                this.audioContext = new AudioContext();
+            }
+
+            if (!this.audioSource || this.currentChunkIndex !== chunkIndex) {
+                if (this.audioSource) {
+                    try {
+                        this.audioSource.stop();
+                    } catch (e) {
+                        // ignore
+                    }
+                    this.audioSource.disconnect();
+                    this.audioSource = null;
+                }
+
+                this.currentChunkIndex = chunkIndex;
+
+                if (audioChunks[chunkIndex]) {
+                    this.audioContext.decodeAudioData(
+                        audioChunks[chunkIndex].slice(0),
+                        (audioBuffer) => {
+                            if (!this.timePerFrame) {
+                                this.timePerFrame = (audioBuffer.duration / dataChunkSize) * 1000;
+                            }
+                            console.log('timePerFrame', this.timePerFrame, audioBuffer.duration, dataChunkSize);
+                            const startTime = framePositionInChunk * (this.timePerFrame / 1000);
+
+                            this.audioSource = this.audioContext.createBufferSource();
+                            this.audioSource.buffer = audioBuffer;
+                            this.audioSource.connect(this.audioContext.destination);
+
+                            this.audioSource.onended = () => {
+                                resolve();
+                            };
+                            this.audioSource.start(0, startTime, this.timePerFrame / 1000);
+                        },
+                        (error) => {
+                            console.error('Error decoding audio data:', error);
+                            reject(error);
+                        }
+                    );
+                } else {
+                    resolve();
+                }
+            } else if (this.audioSource && this.audioSource.buffer && this.timePerFrame) {
+                const currentBuffer = this.audioSource.buffer;
+
+                try {
+                    this.audioSource.stop();
+                } catch (e) {
+                    // ignore
+                }
+                this.audioSource.disconnect();
+
+                const startTime = framePositionInChunk * (this.timePerFrame / 1000);
+                this.audioSource = this.audioContext.createBufferSource();
+                this.audioSource.buffer = currentBuffer;
+                this.audioSource.connect(this.audioContext.destination);
+
+                this.audioSource.onended = () => {
+                    resolve();
+                };
+                this.audioSource.start(0, startTime, this.timePerFrame / 1000);
+            } else {
+                resolve();
+            }
+        });
+    }
+
+    private cleanupAudio(): void {
+        if (this.audioSource) {
+            this.audioSource.stop();
+            this.audioSource.disconnect();
+            this.audioSource = null;
+        }
+        if (this.audioContext) {
+            this.audioContext.close();
+            this.audioContext = null;
+        }
+    }
+
     private autoSave(): void {
         const { autoSave, saving, onSaveAnnotation } = this.props;
 
@@ -624,6 +753,7 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
     public render(): JSX.Element {
         const {
             playing,
+            muteAudio,
             saving,
             jobInstance,
             jobInstance: { startFrame, stopFrame },
@@ -650,6 +780,7 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
                 showStatistics={this.showStatistics}
                 showFilters={this.showFilters}
                 onSwitchPlay={this.onSwitchPlay}
+                onSwitchMute={this.onSwitchMute}
                 onPrevFrame={this.onPrevFrame}
                 onNextFrame={this.onNextFrame}
                 onForward={this.onForward}
@@ -669,6 +800,7 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
                 keyMap={keyMap}
                 workspace={workspace}
                 playing={playing}
+                muteAudio={muteAudio}
                 saving={saving}
                 ranges={ranges}
                 startFrame={startFrame}

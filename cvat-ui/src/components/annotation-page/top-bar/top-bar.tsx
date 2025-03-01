@@ -18,6 +18,7 @@ import RightGroup from './right-group';
 
 interface Props {
     playing: boolean;
+    muteAudio: boolean;
     saving: boolean;
     frameNumber: number;
     frameFilename: string;
@@ -51,6 +52,7 @@ interface Props {
     showStatistics(): void;
     showFilters(): void;
     onSwitchPlay(): void;
+    onSwitchMute(): void;
     onPrevFrame(): void;
     onNextFrame(): void;
     onForward(): void;
@@ -78,6 +80,7 @@ export default function AnnotationTopBarComponent(props: Props): JSX.Element {
         undoAction,
         redoAction,
         playing,
+        muteAudio,
         ranges,
         frameNumber,
         frameFilename,
@@ -108,6 +111,7 @@ export default function AnnotationTopBarComponent(props: Props): JSX.Element {
         showFilters,
         changeWorkspace,
         onSwitchPlay,
+        onSwitchMute,
         onPrevFrame,
         onNextFrame,
         onForward,
@@ -135,6 +139,7 @@ export default function AnnotationTopBarComponent(props: Props): JSX.Element {
         <PlayerButtons
             key='player_buttons'
             playing={playing}
+            muteAudio={muteAudio}
             playPauseShortcut={playPauseShortcut}
             nextFrameShortcut={nextFrameShortcut}
             previousFrameShortcut={previousFrameShortcut}
@@ -143,6 +148,7 @@ export default function AnnotationTopBarComponent(props: Props): JSX.Element {
             navigationType={navigationType}
             keyMap={keyMap}
             workspace={workspace}
+            onSwitchMute={onSwitchMute}
             onPrevFrame={onPrevFrame}
             onNextFrame={onNextFrame}
             onForward={onForward}

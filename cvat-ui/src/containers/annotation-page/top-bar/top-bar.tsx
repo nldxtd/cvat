@@ -312,7 +312,6 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
         }
         if (Object.keys(prevProps.audioChunks).length !== Object.keys(audioChunks).length ||
             prevProps.activeRequests.size !== activeRequests.size) {
-            console.log("early return on unneccesary playing")
             return;
         }
         this.handlePlayIfNecessary();
@@ -692,8 +691,9 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
         this.currentChunkIndex = chunkIndex;
 
         try {
+            const audioData = audioChunks[chunkIndex].slice(0);
             this.audioContext.decodeAudioData(
-                audioChunks[chunkIndex],
+                audioData,
                 (audioBuffer) => {
                     if (!this.timePerFrame) {
                         this.timePerFrame = (audioBuffer.duration / dataChunkSize) * 1000;

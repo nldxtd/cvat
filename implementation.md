@@ -123,6 +123,8 @@ I have tried the following two approches:
 
 Each of these two function has its advantage and downside. For the first approch, audio and video is synchronous all the time, but audio play would be more discrete. For the second approch, the synchrony in each chunk cannot be ensured, though with more audio playing premotion.
 
+In the online version, the second approch is used because it seems more perfect.
+
 #### 5. Add mute button
 
 This would be more straight forward since you just add a state called muted and is updated by clicking on the button. And the state change would cause the audioSource to disappear.

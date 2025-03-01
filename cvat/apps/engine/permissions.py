@@ -630,6 +630,7 @@ class JobPermission(OpenPolicyAgentPermission):
         EXPORT_ANNOTATIONS = 'export:annotations'
         EXPORT_DATASET = 'export:dataset'
         VIEW_DATA = 'view:data'
+        VIEW_AUDIO = 'view:audio'
         VIEW_METADATA = 'view:metadata'
         UPDATE_METADATA = 'update:metadata'
         VIEW_VALIDATION_LAYOUT = 'view:validation_layout'
@@ -723,6 +724,7 @@ class JobPermission(OpenPolicyAgentPermission):
             ('append_annotations_chunk', 'PATCH'): Scopes.UPDATE_ANNOTATIONS,
             ('append_annotations_chunk', 'HEAD'): Scopes.UPDATE_ANNOTATIONS,
             ('data', 'GET'): Scopes.VIEW_DATA,
+            ('audio', 'GET'): Scopes.VIEW_AUDIO,
             ('metadata','GET'): Scopes.VIEW_METADATA,
             ('metadata','PATCH'): Scopes.UPDATE_METADATA,
             ('issues', 'GET'): Scopes.VIEW,

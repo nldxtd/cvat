@@ -122,6 +122,7 @@ class StateChoice(str, Enum):
 class DataChoice(str, Enum):
     VIDEO = 'video'
     IMAGESET = 'imageset'
+    AUDIO = 'audio'
     LIST = 'list'
 
     @classmethod
@@ -347,12 +348,17 @@ class Data(models.Model):
     def get_original_cache_dirname(self):
         return os.path.join(self.get_data_dirname(), "original")
 
+    def get_audio_cache_dirname(self):
+        return os.path.join(self.get_data_dirname(), "audio")
+
     @staticmethod
     def _get_chunk_name(segment_id: int, chunk_number: int, chunk_type: DataChoice | str) -> str:
         if chunk_type == DataChoice.VIDEO:
             ext = 'mp4'
         elif chunk_type == DataChoice.IMAGESET:
             ext = 'zip'
+        elif chunk_type == DataChoice.AUDIO:
+            ext = 'mp3'
         else:
             ext = 'list'
 
@@ -372,6 +378,10 @@ class Data(models.Model):
         return os.path.join(self.get_compressed_cache_dirname(),
             self._get_compressed_chunk_name(segment_id, chunk_number))
 
+    def get_audio_segment_chunk_path(self, chunk_number: int, segment_id: int) -> str:
+        return os.path.join(self.get_audio_cache_dirname(),
+            self._get_chunk_name(segment_id, chunk_number, DataChoice.AUDIO))
+
     def get_manifest_path(self) -> str:
         return os.path.join(self.get_upload_dirname(), self.MANIFEST_FILENAME)
 
@@ -381,6 +391,7 @@ class Data(models.Model):
             shutil.rmtree(data_path)
         os.makedirs(self.get_compressed_cache_dirname())
         os.makedirs(self.get_original_cache_dirname())
+        os.makedirs(self.get_audio_cache_dirname())
         os.makedirs(self.get_upload_dirname())
 
     @transaction.atomic

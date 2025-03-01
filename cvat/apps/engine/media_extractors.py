@@ -608,6 +608,8 @@ class VideoReader(IMediaReader):
         self.allow_threading = allow_threading
         self._frame_count: Optional[int] = None
         self._frame_size: Optional[tuple[int, int]] = None # (w, h)
+        self._fps: Optional[float] = None
+        self._have_audio: Optional[bool] = None
 
     def iterate_frames(
         self,
@@ -752,6 +754,165 @@ class VideoReader(IMediaReader):
 
         return frame_count
 
+    def separate_audio_chunks(self, chunk_size: int) -> dict[int, bytes]:
+        """
+        Split audio from video into chunks based on frame parameters
+        Args:
+            chunk_size: number of frames in each chunk
+        Returns:
+            Dictionary mapping chunk_id to audio data bytes
+        """
+        chunks_data = {}
+        with self._read_av_container() as container:
+            if not container.streams.video:
+                raise ValueError("No video stream found in file")
+
+            video_stream = container.streams.video[0]
+            if self._fps is None:
+                self._fps = float(video_stream.average_rate)
+            if self._have_audio is None:
+                self._have_audio = bool(container.streams.audio)
+
+            if not self._have_audio:
+                return {}
+
+            audio_stream = container.streams.audio[0]
+            time_base = audio_stream.time_base
+
+            # Calculate video duration and total frames
+            duration_seconds = float(container.duration) / 1000000  # microseconds to seconds
+            total_frames = int(duration_seconds * self._fps)
+
+            # Pre-calculate how many chunks we expect
+            chunk_id = 0
+            max_chunk_id = max(0, (total_frames - self._start) // (chunk_size * self._step))
+
+            while chunk_id <= max_chunk_id:
+                chunk_start_frame = self._start + (chunk_id * chunk_size * self._step)
+                chunk_end_frame = chunk_start_frame + (chunk_size * self._step) - 1
+
+                # Make sure we don't exceed total frames
+                if chunk_start_frame >= total_frames:
+                    break
+
+                start_pts = int(chunk_start_frame * time_base.denominator / self._fps)
+                end_pts = int((chunk_end_frame + 1) * time_base.denominator / self._fps)
+
+                output = io.BytesIO()
+                output_container = av.open(output, 'w', format='mp3')
+                output_stream = output_container.add_stream('mp3')
+
+                if audio_stream.bit_rate:
+                    output_stream.bit_rate = audio_stream.bit_rate
+                if audio_stream.sample_rate:
+                    output_stream.sample_rate = audio_stream.sample_rate
+
+                container.seek(start_pts, stream=audio_stream)
+
+                found_frames = False
+                frame_count = 0
+                max_frames_per_chunk = chunk_size * 10  # Safety limit
+
+                for frame in container.decode(audio=0):
+                    frame_count += 1
+                    if frame_count > max_frames_per_chunk:
+                        break
+
+                    if frame.pts >= end_pts:
+                        found_frames = True
+                        break
+
+                    found_frames = True
+                    packet = output_stream.encode(frame)
+                    if packet:
+                        output_container.mux(packet)
+
+                if not found_frames:
+                    break
+
+                # Flush encoder
+                packet = output_stream.encode(None)
+                if packet:
+                    output_container.mux(packet)
+
+                # Close container properly
+                output_container.close()
+
+                chunks_data[chunk_id] = output.getvalue()
+                output.close()
+
+                chunk_id += 1
+
+        return chunks_data
+
+    def get_audio_chunk(self, chunk_size: int, chunk_index: int) -> Optional[bytes]:
+        """
+        Get audio data for a specific chunk
+        Args:
+            chunk_size: number of frames in each chunk
+            chunk_index: index of the chunk to extract
+        Returns:
+            Audio data in bytes or None if no audio or error
+        """
+        #
+        print("### 6")
+        with self._read_av_container() as container:
+
+            if not container.streams.video:
+                raise ValueError("No video stream found in file")
+
+            video_stream = container.streams.video[0]
+            if self._fps is None:
+                self._fps = float(video_stream.average_rate)
+            if self._have_audio is None:
+                self._have_audio = bool(container.streams.audio)
+
+            if not self._have_audio:
+                return None
+
+            audio_stream = container.streams.audio[0]
+            time_base = audio_stream.time_base
+
+            chunk_start_frame = self._start + (chunk_index * chunk_size * self._step)
+            chunk_end_frame = chunk_start_frame + (chunk_size * self._step) - 1
+
+            start_pts = int(chunk_start_frame * time_base.denominator / self._fps)
+            end_pts = int((chunk_end_frame + 1) * time_base.denominator / self._fps)
+
+            output = io.BytesIO()
+            output_container = av.open(output, 'w', format='mp3')
+            output_stream = output_container.add_stream('mp3')
+
+            if audio_stream.bit_rate:
+                output_stream.bit_rate = audio_stream.bit_rate
+            if audio_stream.sample_rate:
+                output_stream.sample_rate = audio_stream.sample_rate
+
+            container.seek(start_pts, stream=audio_stream)
+
+            found_frames = False
+            for frame in container.decode(audio=0):
+                if frame.pts >= end_pts:
+                    break
+
+                found_frames = True
+                packet = output_stream.encode(frame)
+                if packet:
+                    output_container.mux(packet)
+
+            if not found_frames:
+                output.close()
+                return None
+
+            packet = output_stream.encode(None)
+            if packet:
+                output_container.mux(packet)
+
+            output_container.close()
+
+            audio_data = output.getvalue()
+            output.close()
+            return audio_data
 
 class ImageReaderWithManifest:
     def __init__(self, manifest_path: str):

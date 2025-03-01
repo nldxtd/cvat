@@ -1681,5 +1681,17 @@ def _create_static_chunks(db_task: models.Task, *, media_extractor: IMediaReader
                     )
                 ):
                     save_chunks(executor, db_segment, chunk_idx, chunk_frame_ids)
+                if isinstance(media_extractor, MEDIA_TYPES['video']['extractor']):
+                    try:
+                        audio_chunks_data = media_extractor.separate_audio_chunks(db_data.chunk_size)
+                        for chunk_idx, audio_chunk in audio_chunks_data.items():
+                            audio_chunk_path = db_data.get_audio_segment_chunk_path(chunk_idx, segment_id=db_segment.id)
+                            with open(audio_chunk_path, 'wb') as f:
+                                f.write(audio_chunk)
+                        slogger.glob.error(f"Split audio into chunks succeeded")
+                    except Exception as e:
+                        slogger.glob.error(f"Failed to split audio into chunks: {e}")
+                        return {}
+
 
                 progress_updater.update_progress(segment_idx / len(db_segments))

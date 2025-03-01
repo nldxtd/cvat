@@ -78,6 +78,7 @@ from cvat.apps.engine.frame_provider import (
     FrameQuality,
     IFrameProvider,
     JobFrameProvider,
+    SegmentAudioProvider,
     TaskFrameProvider,
 )
 from cvat.apps.engine.location import StorageType, get_location_configuration
@@ -922,6 +923,61 @@ class _JobDataGetter(_DataGetter):
             self._db_job.segment.chunks_updated_date
         )
 
+
+class _JobAudioGetter():
+    def __init__(
+        self,
+        db_job: models.Job,
+        *,
+        data_index: Union[str, int]
+    ) -> None:
+        self._db_job = db_job
+        self.index = int(data_index)
+
+    def _get_audio_provider(self) -> SegmentAudioProvider:
+        return SegmentAudioProvider(self._db_job.segment)
+
+    def __call__(self):
+        audio_provider = self._get_audio_provider()
+
+        try:
+            data = audio_provider.get_chunk(chunk_number=self.index)
+            return HttpResponse(
+                data.data.getvalue(),
+                content_type=data.mime,
+                headers=self._get_chunk_response_headers(data),
+            )
+        except (TimeoutError, CvatChunkTimestampMismatchError, LockError):
+            return Response(
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+                headers={'Retry-After': _RETRY_AFTER_TIMEOUT},
+            )
+
+    _CHUNK_HEADER_BYTES_LENGTH = 1000
+    "The number of significant bytes from the chunk header, used for checksum computation"
+
+    def _get_chunk_checksum(self, chunk_data: DataWithMeta) -> str:
+        print('-> get_chunk_checksum')
+        data = chunk_data.data.getbuffer()
+        size_checksum = zlib.crc32(str(len(data)).encode())
+        res = str(zlib.crc32(data[:self._CHUNK_HEADER_BYTES_LENGTH], size_checksum))
+        print('<- get_chunk_checksum', res)
+        return res
+
+    def _make_chunk_response_headers(self, checksum: str, updated_date: datetime) -> dict[str, str]:
+        res = {
+            _DATA_CHECKSUM_HEADER_NAME: str(checksum or ''),
+            _DATA_UPDATED_DATE_HEADER_NAME: serializers.DateTimeField().to_representation(updated_date),
+        }
+        print('<- make_chunk_response_headers', res)
+        return res
+
+    def _get_chunk_response_headers(self, chunk_data: DataWithMeta) -> dict[str, str]:
+        headers = self._make_chunk_response_headers(
+            self._get_chunk_checksum(chunk_data),
+            self._db_job.segment.chunks_updated_date
+        )
+        return headers
 
 @extend_schema(tags=['tasks'])
 @extend_schema_view(
@@ -2342,6 +2398,28 @@ class JobViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.CreateMo
             db_job,
             data_type=data_type, data_quality=data_quality,
             data_index=data_index, data_num=data_num
+        )
+        return data_getter()
+
+    @extend_schema(summary='Get audio of a job with chunk index',
+        parameters=[
+            OpenApiParameter('index',
+                location=OpenApiParameter.QUERY, required=True, type=OpenApiTypes.INT,
+                description="A unique number value identifying chunk, starts from 0 for each job"),
+            ],
+        responses={
+            '200': OpenApiResponse(OpenApiTypes.BINARY, description='Data of a specific type'),
+        })
+    @action(detail=True, methods=['GET'],
+        simple_filters=[] # type query parameter conflicts with the filter
+    )
+    def audio(self, request: ExtendedRequest, pk: int):
+        db_job = self.get_object() # call check_object_permissions as well
+        data_index = request.query_params.get('index', None)
+
+        data_getter = _JobAudioGetter(
+            db_job,
+            data_index=data_index
         )
         return data_getter()
 

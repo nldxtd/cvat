@@ -337,6 +337,15 @@ class MediaCache:
     ) -> str:
         return f"{cls._make_cache_key_prefix(db_obj)}_chunk_{chunk_number}_{quality}"
 
+    @classmethod
+    def _make_audio_chunk_key(
+        cls,
+        db_obj: Union[models.Task, models.Segment, models.Job],
+        *,
+        chunk_number: int,
+    ) -> str:
+        return f"{cls._make_cache_key_prefix(db_obj)}_audio_chunk_{chunk_number}"
+
     def _make_preview_key(self, db_obj: Union[models.Segment, models.CloudStorage]) -> str:
         return f"{self._make_cache_key_prefix(db_obj)}_preview"
 
@@ -388,6 +397,24 @@ class MediaCache:
         return self._to_data_with_mime(
             self._validate_cache_item_timestamp(item, db_segment.chunks_updated_date)
         )
+
+    def get_or_set_segment_audio_chunk(
+        self, db_segment: models.Segment, *, chunk_number: int,
+    ) -> DataWithMime:
+
+        item = self._get_or_set_cache_item(
+            self._make_audio_chunk_key(db_segment, chunk_number=chunk_number),
+            create_callback=Callback(
+                callable=self.prepare_segment_audio_chunk,
+                args=[db_segment, chunk_number]
+            ),
+        )
+        db_segment.refresh_from_db(fields=["chunks_updated_date"])
+
+        return self._to_data_with_mime(
+            self._validate_cache_item_timestamp(item, db_segment.chunks_updated_date)
+        )
+
 
     def get_task_chunk(
         self, db_task: models.Task, chunk_number: int, *, quality: FrameQuality
@@ -695,6 +722,54 @@ class MediaCache:
             )
         else:
             assert False, f"Unknown segment type {db_segment.type}"
+
+    def prepare_segment_audio_chunk(
+        self, db_segment: Union[models.Segment, int], chunk_number: int
+    ) -> DataWithMime:
+        """
+        Prepare audio chunk for a segment
+        Args:
+            db_segment: Segment model instance or ID
+            chunk_number: index of the chunk
+        Returns:
+            Tuple of (audio data bytes, mime type)
+        """
+        if isinstance(db_segment, int):
+            db_segment = models.Segment.objects.get(pk=db_segment)
+
+        db_task = db_segment.task
+        db_data = db_task.data
+
+        if not hasattr(db_data, "video"):
+            return io.BytesIO(), ""
+
+        chunk_size = db_data.chunk_size
+        video_path = os.path.join(db_data.get_raw_data_dirname(), db_data.video.path)
+
+        try:
+            video_reader = VideoReader(
+                source_path=[video_path],
+                step=db_data.get_frame_step(),
+                start=db_segment.start_frame,
+                stop=db_segment.stop_frame,
+            )
+
+            audio_data = video_reader.get_audio_chunk(
+                chunk_size=chunk_size,
+                chunk_index=chunk_number
+            )
+
+            if audio_data is None:
+                return io.BytesIO(), ""
+
+            buff = io.BytesIO(audio_data)
+            buff.seek(0)
+
+            return buff, "audio/mp3"
+
+        except Exception as e:
+            slogger.glob.error(f"Failed to get audio chunk {chunk_number} for segment {db_segment.id}: {e}")
+            return io.BytesIO(), ""
 
     def prepare_range_segment_chunk(
         self, db_segment: models.Segment, chunk_number: int, *, quality: FrameQuality

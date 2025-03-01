@@ -726,6 +726,59 @@ class JobFrameProvider(SegmentFrameProvider):
             assert False
 
 
+class SegmentAudioProvider():
+    def __init__(self, db_segment: models.Segment) -> None:
+        self._db_segment = db_segment
+        db_data = db_segment.task.data
+
+        self._loader = Optional[Union[_BufferChunkLoader, _FileChunkLoader]]
+        if (
+            db_data.storage_method == models.StorageMethodChoice.CACHE
+            or not settings.MEDIA_CACHE_ALLOW_STATIC_CACHE
+        ):
+            cache = MediaCache()
+            self._loader = _BufferChunkLoader(
+                reader_class=VideoReader,
+                reader_params={
+                    "allow_threading": False
+                },
+                get_chunk_callback=lambda chunk_idx: cache.prepare_segment_audio_chunk(
+                    db_segment, chunk_number=chunk_idx
+                ),
+            )
+        else:
+            self._loader = _FileChunkLoader(
+                reader_class=VideoReader,
+                reader_params={
+                    "allow_threading": False
+                },
+                get_chunk_path_callback=lambda chunk_idx: db_data.get_audio_segment_chunk_path(
+                    chunk_idx, segment_id=db_segment.id
+                )
+            )
+
+    def validate_chunk_number(self, chunk_number: int) -> int:
+        segment_size = self._db_segment.frame_count
+        last_chunk = math.ceil(segment_size / self._db_segment.task.data.chunk_size) - 1
+        if not 0 <= chunk_number <= last_chunk:
+            raise ValidationError(
+                f"Invalid chunk number '{chunk_number}'. "
+                f"The chunk number should be in the [0, {last_chunk}] range"
+            )
+
+        return chunk_number
+
+    def get_chunk(
+        self,
+        *,
+        chunk_number: int
+    ) -> DataWithMeta[BytesIO]:
+        chunk_number = self.validate_chunk_number(chunk_number)
+        chunk_data, mime = self._loader.read_chunk(chunk_number)
+        print("mime", mime)
+        return DataWithMeta[BytesIO](chunk_data, mime=mime)
+
+
 @overload
 def make_frame_provider(data_source: models.Job) -> JobFrameProvider: ...
 

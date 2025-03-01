@@ -107,7 +107,6 @@ const defaultState: AnnotationState = {
             fetching: false,
             chunks: {},
             activeRequests: new Map(),
-            currentChunk: null,
         },
         navigationType: NavigationType.REGULAR,
         ranges: '',
@@ -341,7 +340,6 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
             const {
                 number,
                 data,
-                chunkIndex,
                 filename,
                 relatedFiles,
                 states,
@@ -367,10 +365,6 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                         changeTime,
                         delay,
                         changeFrameEvent,
-                    },
-                    audio: {
-                        ...state.player.audio,
-                        currentChunk: chunkIndex,
                     },
                 },
                 annotations: {
@@ -550,18 +544,6 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                             [chunkIndex]: buffer,
                         },
                         fetching: false,
-                    },
-                },
-            };
-        }
-        case AnnotationActionTypes.SET_CURRENT_AUDIO_CHUNK: {
-            return {
-                ...state,
-                player: {
-                    ...state.player,
-                    audio: {
-                        ...state.player.audio,
-                        currentChunk: action.payload,
                     },
                 },
             };

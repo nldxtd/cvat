@@ -778,7 +778,6 @@ export interface AnnotationState {
             fetching: boolean;
             chunks: Record<number, ArrayBuffer>;
             activeRequests: Map<number, Promise<void>>;
-            currentChunk: number | null;
         };
         navigationType: NavigationType;
         ranges: string;

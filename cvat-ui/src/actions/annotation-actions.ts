@@ -108,7 +108,6 @@ export enum AnnotationActionTypes {
     SET_AUDIO_MUTED = 'SET_AUDIO_MUTED',
     SET_AUDIO_FETCHING = 'SET_AUDIO_FETCHING',
     ADD_AUDIO_CHUNK = 'ADD_AUDIO_CHUNK',
-    SET_CURRENT_AUDIO_CHUNK = 'SET_CURRENT_AUDIO_CHUNK',
     ADD_AUDIO_ACTIVE_REQUEST = 'ADD_AUDIO_ACTIVE_REQUEST',
     REMOVE_AUDIO_ACTIVE_REQUEST = 'REMOVE_AUDIO_ACTIVE_REQUEST',
 
@@ -797,7 +796,6 @@ export function changeFrameAsync(
                 payload: {
                     number: toFrame,
                     data,
-                    chunkIndex,
                     filename: data.filename,
                     relatedFiles: data.relatedFiles,
                     states,
@@ -1066,10 +1064,6 @@ export function getJobAsync({
                         },
                     });
                 }
-                dispatch({
-                    type: AnnotationActionTypes.SET_CURRENT_AUDIO_CHUNK,
-                    payload: chunkIndex,
-                });
             } catch (audioError) {
                 dispatch({
                     type: AnnotationActionTypes.SET_AUDIO_FETCHING,

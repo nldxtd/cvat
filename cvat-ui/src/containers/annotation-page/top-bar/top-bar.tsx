@@ -58,7 +58,6 @@ interface StateToProps {
     audioFetching: boolean
     audioChunks: Record<number, ArrayBuffer>;
     activeRequests: Map<number, Promise<void>>;
-    currentAudioChunk: number | null;
     playing: boolean;
     saving: boolean;
     canvasIsReady: boolean;
@@ -124,7 +123,6 @@ function mapStateToProps(state: CombinedState): StateToProps {
                     fetching: audioFetching,
                     chunks: audioChunks,
                     activeRequests,
-                    currentChunk: currentAudioChunk,
                 },
                 navigationType,
             },
@@ -158,7 +156,6 @@ function mapStateToProps(state: CombinedState): StateToProps {
         audioFetching,
         audioChunks,
         activeRequests,
-        currentAudioChunk,
         playing,
         canvasIsReady,
         saving,
@@ -295,11 +292,28 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
     }
 
     public componentDidUpdate(prevProps: Props): void {
-        const { autoSaveInterval } = this.props;
+        const { autoSaveInterval, muteAudio, playing, audioChunks, activeRequests } = this.props;
 
         if (autoSaveInterval !== prevProps.autoSaveInterval) {
             if (this.autoSaveInterval) window.clearInterval(this.autoSaveInterval);
             this.autoSaveInterval = window.setInterval(this.autoSave.bind(this), autoSaveInterval);
+        }
+        if (this.audioSource) {
+            if (muteAudio || !playing) {
+                try {
+                    this.audioSource.stop();
+                } catch (e) {
+                    // ignore
+                }
+                this.audioSource.disconnect();
+                this.audioSource = null;
+                this.currentChunkIndex = null;
+            }
+        }
+        if (Object.keys(prevProps.audioChunks).length !== Object.keys(audioChunks).length ||
+            prevProps.activeRequests.size !== activeRequests.size) {
+            console.log("early return on unneccesary playing")
+            return;
         }
         this.handlePlayIfNecessary();
     }
@@ -648,79 +662,56 @@ class AnnotationTopBarContainer extends React.PureComponent<Props> {
         return undefined;
     };
 
-    private playAudioForFrame(frameNumber: number, dataChunkSize: number): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            const { audioChunks } = this.props;
-            const chunkIndex = Math.floor(frameNumber / dataChunkSize);
-            const framePositionInChunk = frameNumber % dataChunkSize;
+    private playAudioForFrame(frameNumber: number, dataChunkSize: number): void {
+        const { audioChunks } = this.props;
+        const chunkIndex = Math.floor(frameNumber / dataChunkSize);
+        const framePositionInChunk = frameNumber % dataChunkSize;
 
-            if (!this.audioContext) {
-                this.audioContext = new AudioContext();
-            }
+        if (!this.audioContext) {
+            this.audioContext = new AudioContext();
+        }
 
-            if (!this.audioSource || this.currentChunkIndex !== chunkIndex) {
-                if (this.audioSource) {
-                    try {
-                        this.audioSource.stop();
-                    } catch (e) {
-                        // ignore
-                    }
-                    this.audioSource.disconnect();
-                    this.audioSource = null;
-                }
+        if (this.audioSource && chunkIndex === this.currentChunkIndex) {
+            return;
+        }
 
-                this.currentChunkIndex = chunkIndex;
-
-                if (audioChunks[chunkIndex]) {
-                    this.audioContext.decodeAudioData(
-                        audioChunks[chunkIndex].slice(0),
-                        (audioBuffer) => {
-                            if (!this.timePerFrame) {
-                                this.timePerFrame = (audioBuffer.duration / dataChunkSize) * 1000;
-                            }
-                            console.log('timePerFrame', this.timePerFrame, audioBuffer.duration, dataChunkSize);
-                            const startTime = framePositionInChunk * (this.timePerFrame / 1000);
-
-                            this.audioSource = this.audioContext.createBufferSource();
-                            this.audioSource.buffer = audioBuffer;
-                            this.audioSource.connect(this.audioContext.destination);
-
-                            this.audioSource.onended = () => {
-                                resolve();
-                            };
-                            this.audioSource.start(0, startTime, this.timePerFrame / 1000);
-                        },
-                        (error) => {
-                            console.error('Error decoding audio data:', error);
-                            reject(error);
-                        }
-                    );
-                } else {
-                    resolve();
-                }
-            } else if (this.audioSource && this.audioSource.buffer && this.timePerFrame) {
-                const currentBuffer = this.audioSource.buffer;
-
-                try {
-                    this.audioSource.stop();
-                } catch (e) {
-                    // ignore
-                }
+        if (this.audioSource) {
+            try {
+                this.audioSource.stop();
                 this.audioSource.disconnect();
-
-                const startTime = framePositionInChunk * (this.timePerFrame / 1000);
-                this.audioSource = this.audioContext.createBufferSource();
-                this.audioSource.buffer = currentBuffer;
-                this.audioSource.connect(this.audioContext.destination);
-
-                this.audioSource.onended = () => {
-                    resolve();
-                };
-                this.audioSource.start(0, startTime, this.timePerFrame / 1000);
-            } else {
-                resolve();
+            } catch (e) {
+                console.warn('Error stopping audio source:', e);
             }
-        });
+            this.audioSource = null;
+        }
+
+        if (!audioChunks[chunkIndex]) {
+            return;
+        }
+
+        this.currentChunkIndex = chunkIndex;
+
+        try {
+            this.audioContext.decodeAudioData(
+                audioChunks[chunkIndex],
+                (audioBuffer) => {
+                    if (!this.timePerFrame) {
+                        this.timePerFrame = (audioBuffer.duration / dataChunkSize) * 1000;
+                    }
+
+                    const startTime = framePositionInChunk * (this.timePerFrame / 1000);
+                    this.audioSource = this.audioContext!.createBufferSource();
+                    this.audioSource.buffer = audioBuffer;
+                    this.audioSource.connect(this.audioContext!.destination);
+                    this.audioSource.start(0, startTime);
+                },
+                (error) => {
+                    console.error('Error decoding audio data:', error);
+                }
+            );
+        } catch (error) {
+            console.error('Error playing audio:', error);
+        }
     }
 
     private cleanupAudio(): void {
